@@ -8567,12 +8567,35 @@ local Aim = {
 _G.FallenSurvivalAimbot = Aim
 
 local AIM_GRAVITY = 196.2
-local AimToolInfo
-pcall(function()
-    local modules = game:GetService("ReplicatedStorage"):FindFirstChild("Modules")
-    local toolModule = modules and modules:FindFirstChild("ToolInfo")
-    if toolModule then AimToolInfo = require(toolModule) end
-end)
+local AimToolInfo = _G.FallenSurvivalAimToolInfoCache
+if type(AimToolInfo) ~= "table" then
+    pcall(function()
+        local modules = game:GetService("ReplicatedStorage"):FindFirstChild("Modules")
+        local toolModule = modules and modules:FindFirstChild("ToolInfo")
+        if not toolModule then return end
+
+        local source = decompile(toolModule)
+        if type(source) ~= "string" or #source < 1000 then return end
+        local returnName = source:match("return%s+([%a_][%w_]*)%s*$")
+        if not returnName then return end
+
+        local captureName = "FallenSurvivalAimToolInfoCapture"
+        source = source:gsub(
+            "return%s+" .. returnName .. "%s*$",
+            "_G." .. captureName .. " = " .. returnName
+        )
+        local chunk = loadstring(source)
+        if not chunk then return end
+        chunk()
+
+        local captured = _G[captureName]
+        _G[captureName] = nil
+        if type(captured) == "table" then
+            AimToolInfo = captured
+            _G.FallenSurvivalAimToolInfoCache = captured
+        end
+    end)
+end
 
 local function aimReadVelocity(root)
     local velocity = Vector3.new(0, 0, 0)
