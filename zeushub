@@ -264,7 +264,7 @@ local Layout = {
   DialogButtonPad = 16,
   DialogButtonRadius = 6,
   ListRow = 26,
-  ListVisible = 8,
+  ListVisible = 6,
   ListHeader = 30,
   ListPad = 8,
   ListInset = 4,
@@ -3184,7 +3184,28 @@ end
     local AreaHeight = MaxRows * Layout.ListRow
     local Panel = Blend(Theme.Background, Theme.Text, Layout.PanelMix)
 
-    Drop.Offset = math.min(math.max(Drop.Offset, 0), math.max(0, #List - MaxRows))
+    local MaxOffset = math.max(0, #List - MaxRows)
+    Drop.Offset = math.min(math.max(Drop.Offset, 0), MaxOffset)
+
+    if MaxOffset > 0 and (Hovered or State.Focus == Drop.Search) then
+      if Keys.Up.Click then
+        Drop.Offset = math.max(0, Drop.Offset - 1)
+        Keys.Up.Click = false
+      end
+      if Keys.Down.Click then
+        Drop.Offset = math.min(MaxOffset, Drop.Offset + 1)
+        Keys.Down.Click = false
+      end
+      if Keys.PageUp.Click then
+        Drop.Offset = math.max(0, Drop.Offset - MaxRows)
+        Keys.PageUp.Click = false
+      end
+      if Keys.PageDown.Click then
+        Drop.Offset = math.min(MaxOffset, Drop.Offset + MaxRows)
+        Keys.PageDown.Click = false
+      end
+    end
+
     Drop.Smooth = Approach(Drop.Smooth or Drop.Offset, Drop.Offset, Layout.ListScrollSpeed)
 
     local Smooth = Drop.Smooth
@@ -8543,6 +8564,13 @@ r = os:Toggle("Boxes", Ore.showBox, function(v) Ore.showBox = v end)
 add(r, function(v) Ore.showBox = v end)
 r = os:Toggle("Distance", Ore.showDistance, function(v) Ore.showDistance = v end)
 add(r, function(v) Ore.showDistance = v end)
+r = os:Dropdown("Types", { "Stone", "Metal", "Phosphate" }, { "Stone", "Metal", "Phosphate" }, true, function(v)
+    oreFilters.Stone = false
+    oreFilters.Metal = false
+    oreFilters.Phosphate = false
+    for i = 1, #(v or {}) do oreFilters[v[i]] = true end
+    pcall(function() Ore.Rescan(); collectOres() end)
+end, "multi-select ore filters", true)
 os:Button("Rescan nodes", function() Ore.Rescan(); collectOres() end)
 
 local pls = rt:Section("Plant ESP", "Left", "plants")
@@ -8554,21 +8582,32 @@ r = pls:Toggle("Boxes", Plant.showBox, function(v) Plant.showBox = v end)
 add(r, function(v) Plant.showBox = v end)
 r = pls:Toggle("Distance", Plant.showDistance, function(v) Plant.showDistance = v end)
 add(r, function(v) Plant.showDistance = v end)
-pls:Button("Rescan plants", function() Plant.Rescan() end)
-
-
-local fs = rt:Section("Filters", "Right", "types")
-r = fs:Dropdown("Ore types", { "Stone", "Metal", "Phosphate" }, { "Stone", "Metal", "Phosphate" }, true, function(v)
-    oreFilters.Stone = false
-    oreFilters.Metal = false
-    oreFilters.Phosphate = false
-    for i = 1, #(v or {}) do oreFilters[v[i]] = true end
-    pcall(function() Ore.Rescan(); collectOres() end)
-end, "multi-select ore filters")
-r = fs:Dropdown("Plant types", Plant.selected(), Plant.choices, true, function(v)
+r = pls:Dropdown("Types", Plant.selected(), Plant.choices, true, function(v)
     Plant.applySelection(v)
     pcall(function() Plant.Rescan() end)
 end, "multi-select plant filters", true)
+pls:Button("Rescan plants", function() Plant.Rescan() end)
+
+
+local ls = rt:Section("Loot Crates", "Right", "archive")
+r = ls:Toggle("Enabled", Crate.enabled, function(v) Crate.enabled = v end)
+add(r, function(v) Crate.enabled = v end)
+r = ls:Slider("Range", Crate.range, 100, 300, 6000, "m", function(v) Crate.range = v end)
+add(r, function(v) Crate.range = v end)
+r = ls:Toggle("Boxes", Crate.showBox, function(v) Crate.showBox = v end)
+add(r, function(v) Crate.showBox = v end)
+r = ls:Toggle("Distance", Crate.showDistance, function(v) Crate.showDistance = v end)
+add(r, function(v) Crate.showDistance = v end)
+r = ls:Dropdown("Types", Crate.selected(), Crate.choices, true, function(v)
+    Crate.applySelection(v)
+    pcall(function() Crate.Rescan() end)
+end, "multi-select loot filters", true)
+ls:Button("Rescan loot", function()
+    Crate.Rescan()
+    pcall(function()
+        Lib:Notify("Crate ESP", "Anchored " .. tostring(Crate.stats.anchored) .. "/" .. tostring(Crate.stats.found) .. " loot containers", 3)
+    end)
+end)
 
 
 
@@ -8673,25 +8712,7 @@ add(r, function(v) Cab.showBox = v end)
 r = cs:Toggle("Distance", Cab.showDistance, function(v) Cab.showDistance = v end)
 add(r, function(v) Cab.showDistance = v end)
 cs:Button("Rescan cabinets", function() Cab.Rescan(); pcall(function() Lib:Notify("Cabinet ESP", "Anchored " .. tostring(Cab.stats.anchored) .. "/" .. tostring(Cab.stats.found) .. " base cabinets", 3) end) end)
-local ls = bt:Section("Loot Crates", "Right", "archive")
-r = ls:Toggle("Enabled", Crate.enabled, function(v) Crate.enabled = v end)
-add(r, function(v) Crate.enabled = v end)
-r = ls:Slider("Range", Crate.range, 100, 300, 6000, "m", function(v) Crate.range = v end)
-add(r, function(v) Crate.range = v end)
-r = ls:Toggle("Boxes", Crate.showBox, function(v) Crate.showBox = v end)
-add(r, function(v) Crate.showBox = v end)
-r = ls:Toggle("Distance", Crate.showDistance, function(v) Crate.showDistance = v end)
-add(r, function(v) Crate.showDistance = v end)
-r = ls:Dropdown("Types", Crate.selected(), Crate.choices, true, function(v)
-    Crate.applySelection(v)
-    pcall(function() Crate.Rescan() end)
-end, "multi-select loot filters", true)
-ls:Button("Rescan loot", function()
-    Crate.Rescan()
-    pcall(function()
-        Lib:Notify("Crate ESP", "Anchored " .. tostring(Crate.stats.anchored) .. "/" .. tostring(Crate.stats.found) .. " loot containers", 3)
-    end)
-end)
+
 
 local st = win:Tab("System", "settings")
 local ss = st:Section("Runtime", "Left", "controls")
