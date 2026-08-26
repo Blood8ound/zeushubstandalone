@@ -8780,7 +8780,9 @@ Aim.connection = RunService.RenderStepped:Connect(function(dt)
                 if distance <= Aim.maxDistance then
                     local screen, onScreen = WorldToScreen(partPosition)
                     if onScreen then
-                        local score = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+                        local dx = screen.X - center.X
+                        local dy = screen.Y - center.Y
+                        local score = math.sqrt(dx * dx + dy * dy)
                         if score <= Aim.fov and (not closestScore or score < closestScore) then
                             closest = target
                             closestPosition = partPosition
