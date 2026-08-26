@@ -8543,6 +8543,9 @@ local Aim = {
     visibilityCheck = true,
     teamCheck = true,
     drawFov = true,
+    hardLock = true,
+    stickyTarget = true,
+    lockedUserId = nil,
     fov = 220,
     maxDistance = 1800,
     smoothing = 10,
@@ -8755,10 +8758,17 @@ Aim.connection = RunService.RenderStepped:Connect(function(dt)
         Aim.fovCircle.Visible = Aim.enabled and Aim.drawFov
     end
 
-    if not Aim.enabled then return end
+    if not Aim.enabled then
+        Aim.lockedUserId = nil
+        return
+    end
     local held = false
     pcall(function() held = ismouse2pressed() end)
-    if not held then return end
+    if not held then
+        Aim.lockedUserId = nil
+        return
+    end
+    if not Aim.stickyTarget then Aim.lockedUserId = nil end
 
     local origin = camera.Position
     local localRoot = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
@@ -8778,6 +8788,13 @@ Aim.connection = RunService.RenderStepped:Connect(function(dt)
                     and (localRoot.Position - rootPosition).Magnitude
                     or (origin - rootPosition).Magnitude
                 if distance <= Aim.maxDistance then
+                    local isLocked = Aim.stickyTarget and Aim.lockedUserId == target.userId
+                    if isLocked then
+                        closest = target
+                        closestPosition = partPosition
+                        closestScore = -1
+                        break
+                    end
                     local screen, onScreen = WorldToScreen(partPosition)
                     if onScreen then
                         local dx = screen.X - center.X
@@ -8794,7 +8811,12 @@ Aim.connection = RunService.RenderStepped:Connect(function(dt)
         end
     end
 
-    if not closest or not aimVisible(origin, closestPosition, closest.character) then return end
+    if not closest then
+        Aim.lockedUserId = nil
+        return
+    end
+    if not aimVisible(origin, closestPosition, closest.character) then return end
+    if Aim.stickyTarget then Aim.lockedUserId = closest.userId end
 
     local rawVelocity = aimReadVelocity(closest.root)
     local previous = Aim.velocities[closest.userId] or rawVelocity
@@ -8806,9 +8828,12 @@ Aim.connection = RunService.RenderStepped:Connect(function(dt)
     local desired = targetPosition - origin
     if desired.Magnitude <= 0.001 then return end
 
-    local current = camera.CFrame.LookVector
-    local aimAlpha = 1 - math.exp(-math.max(Aim.smoothing, 1) * math.min(dt, 0.1))
-    local direction = current:Lerp(desired.Unit, aimAlpha)
+    local direction = desired.Unit
+    if not Aim.hardLock then
+        local current = camera.CFrame.LookVector
+        local aimAlpha = 1 - math.exp(-math.max(Aim.smoothing, 1) * math.min(dt, 0.1))
+        direction = current:Lerp(direction, aimAlpha)
+    end
     if direction.Magnitude > 0.001 then
         camera.lookAt(origin, origin + direction.Unit * 1000)
     end
@@ -8824,6 +8849,7 @@ function Aim.Stop()
     Aim.fovCircle = nil
     Aim.targets = {}
     Aim.velocities = {}
+    Aim.lockedUserId = nil
 end
 
 -- UI shell.
@@ -8985,6 +9011,16 @@ local ga = gt:Section("Predicted Aimbot", "Right", "crosshair target")
 ga:Info("Hold right mouse to aim. Uses the equipped weapon's live bullet speed and gravity.")
 r = ga:Toggle("Enabled", Aim.enabled, function(v) Aim.enabled = v end)
 add(r, function(v) Aim.enabled = v end)
+r = ga:Toggle("Hard lock / recoil control", Aim.hardLock, function(v) Aim.hardLock = v end)
+add(r, function(v) Aim.hardLock = v end)
+r = ga:Toggle("Sticky target", Aim.stickyTarget, function(v)
+    Aim.stickyTarget = v
+    if not v then Aim.lockedUserId = nil end
+end)
+add(r, function(v)
+    Aim.stickyTarget = v
+    if not v then Aim.lockedUserId = nil end
+end)
 r = ga:Toggle("Prediction", Aim.prediction, function(v) Aim.prediction = v end)
 add(r, function(v) Aim.prediction = v end)
 r = ga:Toggle("Vertical movement", Aim.verticalPrediction, function(v) Aim.verticalPrediction = v end)
