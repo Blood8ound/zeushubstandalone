@@ -8723,15 +8723,14 @@ local function aimCollectTargets()
     Aim.targets = out
 end
 
-Aim.fovCircle = draw("Circle", {
-    Visible = false,
-    Filled = false,
-    Thickness = 1,
-    NumSides = 64,
-    Radius = Aim.fov,
-    Color = Color3.fromRGB(135, 220, 125),
-    Transparency = 0.8,
-})
+Aim.fovCircle = Drawing.new("Circle")
+Aim.fovCircle.Visible = false
+Aim.fovCircle.Filled = false
+Aim.fovCircle.Thickness = 1
+Aim.fovCircle.NumSides = 64
+Aim.fovCircle.Radius = Aim.fov
+Aim.fovCircle.Color = Color3.fromRGB(135, 220, 125)
+Aim.fovCircle.Transparency = 0.8
 
 Aim.collectThread = task.spawn(function()
     while Aim.running do
@@ -8817,7 +8816,9 @@ function Aim.Stop()
     Aim.running = false
     Aim.enabled = false
     if Aim.connection then pcall(function() Aim.connection:Disconnect() end) end
-    remove(Aim.fovCircle)
+    if Aim.fovCircle then
+        pcall(function() Aim.fovCircle:Remove() end)
+    end
     Aim.fovCircle = nil
     Aim.targets = {}
     Aim.velocities = {}
