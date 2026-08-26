@@ -8810,7 +8810,7 @@ Aim.connection = RunService.RenderStepped:Connect(function(dt)
     local aimAlpha = 1 - math.exp(-math.max(Aim.smoothing, 1) * math.min(dt, 0.1))
     local direction = current:Lerp(desired.Unit, aimAlpha)
     if direction.Magnitude > 0.001 then
-        camera:lookAt(origin + direction.Unit * 1000)
+        camera.lookAt(origin + direction.Unit * 1000)
     end
 end)
 
