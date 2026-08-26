@@ -1,7 +1,7 @@
 -- ZeusHub bootstrap loader.
 -- Displays immediately, then downloads and starts the standalone build.
 
-local MAIN_URL = "https://raw.githubusercontent.com/Blood8ound/zeushubstandalone/main/zeushub"
+local MAIN_URL = "https://raw.githubusercontent.com/Blood8ound/zeushubstandalone/main/zeushub?cache=" .. tostring(math.floor(tick()))
 
 local previous = _G.ZeusHubBootstrap
 if type(previous) == "table" and previous.Stop then
