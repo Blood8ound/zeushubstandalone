@@ -8543,6 +8543,8 @@ local Aim = {
     visibilityCheck = true,
     teamCheck = true,
     drawFov = true,
+    showPredictionLine = true,
+    leadScale = 1,
     hardLock = true,
     stickyTarget = true,
     lockedUserId = nil,
@@ -8637,6 +8639,7 @@ local function aimPredict(origin, position, velocity)
 
     local speed = math.max(Aim.bulletSpeed * Aim.speedScale, 1)
     local gravity = Aim.bulletGravity * Aim.gravityScale
+    local leadScale = math.max(tonumber(Aim.leadScale) or 1, 0)
     if not Aim.verticalPrediction then
         velocity = Vector3.new(velocity.X, 0, velocity.Z)
     end
@@ -8648,11 +8651,11 @@ local function aimPredict(origin, position, velocity)
         end)
     end
 
-    local delayed = position + velocity * latency
+    local delayed = position + velocity * latency * leadScale
     local flightTime = (delayed - origin).Magnitude / speed
     for _ = 1, 5 do
         local compensated = delayed
-            + velocity * flightTime
+            + velocity * flightTime * leadScale
             + Vector3.new(0, 0.5 * AIM_GRAVITY * gravity * flightTime * flightTime, 0)
         local nextTime = (compensated - origin).Magnitude / speed
         if math.abs(nextTime - flightTime) < 0.0005 then
@@ -8667,7 +8670,7 @@ local function aimPredict(origin, position, velocity)
     end
 
     return delayed
-        + velocity * flightTime
+        + velocity * flightTime * leadScale
         + Vector3.new(0, 0.5 * AIM_GRAVITY * gravity * flightTime * flightTime, 0),
         flightTime
 end
@@ -8735,6 +8738,12 @@ Aim.fovCircle.Radius = Aim.fov
 Aim.fovCircle.Color = Color3.fromRGB(135, 220, 125)
 Aim.fovCircle.Transparency = 0.8
 
+Aim.predictionLine = Drawing.new("Line")
+Aim.predictionLine.Visible = false
+Aim.predictionLine.Thickness = 2
+Aim.predictionLine.Color = Color3.fromRGB(255, 205, 90)
+Aim.predictionLine.Transparency = 0.85
+
 Aim.collectThread = task.spawn(function()
     while Aim.running do
         if Aim.enabled then
@@ -8752,6 +8761,7 @@ Aim.connection = RunService.RenderStepped:Connect(function(dt)
     if not camera then return end
 
     local center = camera.ViewportSize * 0.5
+    if Aim.predictionLine then Aim.predictionLine.Visible = false end
     if Aim.fovCircle then
         Aim.fovCircle.Position = center
         Aim.fovCircle.Radius = Aim.fov
@@ -8825,6 +8835,15 @@ Aim.connection = RunService.RenderStepped:Connect(function(dt)
     Aim.velocities[closest.userId] = velocity
 
     local targetPosition = aimPredict(origin, closestPosition, velocity)
+    if Aim.prediction and Aim.showPredictionLine and Aim.predictionLine then
+        local currentScreen, currentVisible = WorldToScreen(closestPosition)
+        local predictedScreen, predictedVisible = WorldToScreen(targetPosition)
+        if currentVisible and predictedVisible then
+            Aim.predictionLine.From = Vector2.new(currentScreen.X, currentScreen.Y)
+            Aim.predictionLine.To = Vector2.new(predictedScreen.X, predictedScreen.Y)
+            Aim.predictionLine.Visible = true
+        end
+    end
     local desired = targetPosition - origin
     if desired.Magnitude <= 0.001 then return end
 
@@ -8847,6 +8866,10 @@ function Aim.Stop()
         pcall(function() Aim.fovCircle:Remove() end)
     end
     Aim.fovCircle = nil
+    if Aim.predictionLine then
+        pcall(function() Aim.predictionLine:Remove() end)
+    end
+    Aim.predictionLine = nil
     Aim.targets = {}
     Aim.velocities = {}
     Aim.lockedUserId = nil
@@ -9033,6 +9056,8 @@ r = ga:Toggle("Team check", Aim.teamCheck, function(v) Aim.teamCheck = v end)
 add(r, function(v) Aim.teamCheck = v end)
 r = ga:Toggle("Draw FOV", Aim.drawFov, function(v) Aim.drawFov = v end)
 add(r, function(v) Aim.drawFov = v end)
+r = ga:Toggle("Prediction line", Aim.showPredictionLine, function(v) Aim.showPredictionLine = v end)
+add(r, function(v) Aim.showPredictionLine = v end)
 r = ga:Dropdown("Aim part", { "Head" }, { "Head", "Torso" }, false, function(v)
     Aim.aimPart = v[1] or "Head"
 end)
@@ -9041,6 +9066,8 @@ r = ga:Slider("FOV", Aim.fov, 10, 40, 600, "px", function(v) Aim.fov = v end)
 add(r, function(v) Aim.fov = v end)
 r = ga:Slider("Max distance", Aim.maxDistance, 50, 100, 4000, "m", function(v) Aim.maxDistance = v end)
 add(r, function(v) Aim.maxDistance = v end)
+r = ga:Slider("Prediction distance", Aim.leadScale, 0.05, 0, 3, "x", function(v) Aim.leadScale = v end)
+add(r, function(v) Aim.leadScale = v end)
 r = ga:Slider("Smoothing", Aim.smoothing, 1, 1, 30, "x", function(v) Aim.smoothing = v end)
 add(r, function(v) Aim.smoothing = v end)
 r = ga:Slider("Bullet speed scale", Aim.speedScale, 0.05, 0.5, 3, "x", function(v) Aim.speedScale = v end)
