@@ -7066,6 +7066,7 @@ stop("FallenSurvivalPlantESP")
 stop("FallenSurvivalArmorViewer")
 stop("FallenSurvivalDoorESP")
 stop("FallenSurvivalGunMods")
+stop("FallenSurvivalAimbot")
 if type(_G.FallenSurvivalUISync) == "table" and _G.FallenSurvivalUISync.Stop then pcall(_G.FallenSurvivalUISync.Stop) end
 _G.FallenSurvivalUISync = nil
 
@@ -8530,7 +8531,299 @@ Gun.thickThread = task.spawn(function()
         end
         task.wait(2)
     end
-end)-- UI shell.
+end)
+
+
+local Aim = {
+    running = true,
+    enabled = false,
+    prediction = true,
+    verticalPrediction = true,
+    pingCompensation = true,
+    visibilityCheck = true,
+    teamCheck = true,
+    drawFov = true,
+    fov = 220,
+    maxDistance = 1800,
+    smoothing = 10,
+    aimPart = "Head",
+    speedScale = 1,
+    gravityScale = 1,
+    bulletSpeed = 1000,
+    bulletGravity = 1,
+    weaponName = "Unknown",
+    ballisticReady = false,
+    nextBallisticScan = 0,
+    targets = {},
+    velocities = {},
+    connection = nil,
+    fovCircle = nil,
+}
+_G.FallenSurvivalAimbot = Aim
+
+local AIM_GRAVITY = 196.2
+local AimToolInfo
+pcall(function()
+    local modules = game:GetService("ReplicatedStorage"):FindFirstChild("Modules")
+    local toolModule = modules and modules:FindFirstChild("ToolInfo")
+    if toolModule then AimToolInfo = require(toolModule) end
+end)
+
+local function aimReadVelocity(root)
+    local velocity = Vector3.new(0, 0, 0)
+    pcall(function() velocity = root.AssemblyLinearVelocity end)
+    if velocity.Magnitude <= 0 then
+        pcall(function() velocity = root.Velocity end)
+    end
+    if velocity.Magnitude > 350 then
+        velocity = velocity.Unit * 350
+    end
+    return velocity
+end
+
+function Aim.RefreshBallistics(force)
+    local now = tick()
+    if not force and now < Aim.nextBallisticScan then
+        return Aim.ballisticReady
+    end
+    Aim.nextBallisticScan = now + 1
+
+    local char = lp.Character
+    if not char or type(AimToolInfo) ~= "table" then
+        Aim.ballisticReady = false
+        return false
+    end
+
+    local foundName, foundBullet
+    local function inspect(container)
+        if not container or foundBullet then return end
+        local ok, children = pcall(function() return container:GetChildren() end)
+        if not ok then return end
+        for _, child in ipairs(children) do
+            local info = AimToolInfo[child.Name]
+            local bullet = type(info) == "table" and info.Bullet
+            if type(bullet) == "table"
+                and tonumber(bullet.Speed)
+                and tonumber(bullet.Gravity) then
+                foundName = child.Name
+                foundBullet = bullet
+                return
+            end
+        end
+    end
+
+    inspect(char)
+    pcall(function() inspect(Workspace.CurrentCamera) end)
+
+    if not foundBullet then
+        Aim.ballisticReady = false
+        return false
+    end
+
+    Aim.weaponName = foundName
+    Aim.bulletSpeed = math.max(tonumber(foundBullet.Speed) or 1000, 1)
+    Aim.bulletGravity = tonumber(foundBullet.Gravity) or 1
+    Aim.ballisticReady = true
+    return true
+end
+
+local function aimPredict(origin, position, velocity)
+    if not Aim.prediction or not Aim.RefreshBallistics(false) then
+        return position, 0
+    end
+
+    local speed = math.max(Aim.bulletSpeed * Aim.speedScale, 1)
+    local gravity = Aim.bulletGravity * Aim.gravityScale
+    if not Aim.verticalPrediction then
+        velocity = Vector3.new(velocity.X, 0, velocity.Z)
+    end
+
+    local latency = 0
+    if Aim.pingCompensation then
+        pcall(function()
+            latency = math.min(math.max((tonumber(GetPingValue()) or 0) / 2000, 0), 0.25)
+        end)
+    end
+
+    local delayed = position + velocity * latency
+    local flightTime = (delayed - origin).Magnitude / speed
+    for _ = 1, 5 do
+        local compensated = delayed
+            + velocity * flightTime
+            + Vector3.new(0, 0.5 * AIM_GRAVITY * gravity * flightTime * flightTime, 0)
+        local nextTime = (compensated - origin).Magnitude / speed
+        if math.abs(nextTime - flightTime) < 0.0005 then
+            flightTime = nextTime
+            break
+        end
+        flightTime = math.min(nextTime, 8)
+    end
+
+    if flightTime ~= flightTime or flightTime < 0 or flightTime > 8 then
+        return position, 0
+    end
+
+    return delayed
+        + velocity * flightTime
+        + Vector3.new(0, 0.5 * AIM_GRAVITY * gravity * flightTime * flightTime, 0),
+        flightTime
+end
+
+local aimRayParams
+pcall(function()
+    aimRayParams = RaycastParams.new()
+    aimRayParams.FilterType = Enum.RaycastFilterType.Exclude
+    aimRayParams.IgnoreWater = true
+end)
+
+local function aimVisible(origin, targetPosition, character)
+    if not Aim.visibilityCheck or not aimRayParams then return true end
+    local visible = true
+    pcall(function()
+        aimRayParams.FilterDescendantsInstances = lp.Character and { lp.Character } or {}
+        local hit = Workspace:Raycast(origin, targetPosition - origin, aimRayParams)
+        visible = not hit
+            or not hit.Instance
+            or hit.Instance:IsDescendantOf(character)
+    end)
+    return visible
+end
+
+local function aimCollectTargets()
+    local out = {}
+    local localId = tonumber(lp.UserId)
+    local localTeam
+    pcall(function() localTeam = lp.Team and lp.Team.Name end)
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        local userId
+        pcall(function() userId = tonumber(player.UserId) end)
+        if userId and userId ~= localId then
+            local character, humanoid, head, root, teamName
+            pcall(function()
+                character = player.Character
+                humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                head = character and character:FindFirstChild("Head")
+                root = character and character:FindFirstChild("HumanoidRootPart")
+                teamName = player.Team and player.Team.Name
+            end)
+            if character and humanoid and head and root
+                and (not Aim.teamCheck or not localTeam or teamName ~= localTeam) then
+                out[#out + 1] = {
+                    userId = userId,
+                    player = player,
+                    character = character,
+                    humanoid = humanoid,
+                    head = head,
+                    root = root,
+                }
+            end
+        end
+    end
+    Aim.targets = out
+end
+
+Aim.fovCircle = draw("Circle", {
+    Visible = false,
+    Filled = false,
+    Thickness = 1,
+    NumSides = 64,
+    Radius = Aim.fov,
+    Color = Color3.fromRGB(135, 220, 125),
+    Transparency = 0.8,
+})
+
+Aim.collectThread = task.spawn(function()
+    while Aim.running do
+        if Aim.enabled then
+            pcall(aimCollectTargets)
+            Aim.RefreshBallistics(false)
+        else
+            Aim.targets = {}
+        end
+        task.wait(0.35)
+    end
+end)
+
+Aim.connection = RunService.RenderStepped:Connect(function(dt)
+    local camera = Workspace.CurrentCamera
+    if not camera then return end
+
+    local center = camera.ViewportSize * 0.5
+    if Aim.fovCircle then
+        Aim.fovCircle.Position = center
+        Aim.fovCircle.Radius = Aim.fov
+        Aim.fovCircle.Visible = Aim.enabled and Aim.drawFov
+    end
+
+    if not Aim.enabled then return end
+    local held = false
+    pcall(function() held = ismouse2pressed() end)
+    if not held then return end
+
+    local origin = camera.Position
+    local localRoot = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+    local closest, closestPosition, closestScore
+
+    for _, target in ipairs(Aim.targets) do
+        local ok, health = pcall(function() return target.humanoid.Health end)
+        if ok and health and health > 0 then
+            local part = Aim.aimPart == "Torso" and target.root or target.head
+            local partPosition, rootPosition
+            pcall(function()
+                partPosition = part.Position
+                rootPosition = target.root.Position
+            end)
+            if partPosition and rootPosition then
+                local distance = localRoot
+                    and (localRoot.Position - rootPosition).Magnitude
+                    or (origin - rootPosition).Magnitude
+                if distance <= Aim.maxDistance then
+                    local screen, onScreen = WorldToScreen(partPosition)
+                    if onScreen then
+                        local score = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+                        if score <= Aim.fov and (not closestScore or score < closestScore) then
+                            closest = target
+                            closestPosition = partPosition
+                            closestScore = score
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if not closest or not aimVisible(origin, closestPosition, closest.character) then return end
+
+    local rawVelocity = aimReadVelocity(closest.root)
+    local previous = Aim.velocities[closest.userId] or rawVelocity
+    local velocityAlpha = math.min(math.max(dt * 12, 0), 1)
+    local velocity = previous:Lerp(rawVelocity, velocityAlpha)
+    Aim.velocities[closest.userId] = velocity
+
+    local targetPosition = aimPredict(origin, closestPosition, velocity)
+    local desired = targetPosition - origin
+    if desired.Magnitude <= 0.001 then return end
+
+    local current = camera.CFrame.LookVector
+    local aimAlpha = 1 - math.exp(-math.max(Aim.smoothing, 1) * math.min(dt, 0.1))
+    local direction = current:Lerp(desired.Unit, aimAlpha)
+    if direction.Magnitude > 0.001 then
+        camera:lookAt(origin + direction.Unit * 1000)
+    end
+end)
+
+function Aim.Stop()
+    Aim.running = false
+    Aim.enabled = false
+    if Aim.connection then pcall(function() Aim.connection:Disconnect() end) end
+    remove(Aim.fovCircle)
+    Aim.fovCircle = nil
+    Aim.targets = {}
+    Aim.velocities = {}
+end
+
+-- UI shell.
 local win = Lib:CreateWindow({
     title = "ZeusHub",
     subtitle = "ESP Suite",
@@ -8684,6 +8977,51 @@ gh:Button("Reset gun mods", function()
     Gun.ResetAll()
     Lib:Notify("Gun mods", "Weapon values reset", 2)
 end)
+
+local ga = gt:Section("Predicted Aimbot", "Right", "crosshair target")
+ga:Info("Hold right mouse to aim. Uses the equipped weapon's live bullet speed and gravity.")
+r = ga:Toggle("Enabled", Aim.enabled, function(v) Aim.enabled = v end)
+add(r, function(v) Aim.enabled = v end)
+r = ga:Toggle("Prediction", Aim.prediction, function(v) Aim.prediction = v end)
+add(r, function(v) Aim.prediction = v end)
+r = ga:Toggle("Vertical movement", Aim.verticalPrediction, function(v) Aim.verticalPrediction = v end)
+add(r, function(v) Aim.verticalPrediction = v end)
+r = ga:Toggle("Ping compensation", Aim.pingCompensation, function(v) Aim.pingCompensation = v end)
+add(r, function(v) Aim.pingCompensation = v end)
+r = ga:Toggle("Visibility check", Aim.visibilityCheck, function(v) Aim.visibilityCheck = v end)
+add(r, function(v) Aim.visibilityCheck = v end)
+r = ga:Toggle("Team check", Aim.teamCheck, function(v) Aim.teamCheck = v end)
+add(r, function(v) Aim.teamCheck = v end)
+r = ga:Toggle("Draw FOV", Aim.drawFov, function(v) Aim.drawFov = v end)
+add(r, function(v) Aim.drawFov = v end)
+r = ga:Dropdown("Aim part", { "Head" }, { "Head", "Torso" }, false, function(v)
+    Aim.aimPart = v[1] or "Head"
+end)
+add(r, function(v) Aim.aimPart = v[1] or "Head" end)
+r = ga:Slider("FOV", Aim.fov, 10, 40, 600, "px", function(v) Aim.fov = v end)
+add(r, function(v) Aim.fov = v end)
+r = ga:Slider("Max distance", Aim.maxDistance, 50, 100, 4000, "m", function(v) Aim.maxDistance = v end)
+add(r, function(v) Aim.maxDistance = v end)
+r = ga:Slider("Smoothing", Aim.smoothing, 1, 1, 30, "x", function(v) Aim.smoothing = v end)
+add(r, function(v) Aim.smoothing = v end)
+r = ga:Slider("Bullet speed scale", Aim.speedScale, 0.05, 0.5, 3, "x", function(v) Aim.speedScale = v end)
+add(r, function(v) Aim.speedScale = v end)
+r = ga:Slider("Gravity scale", Aim.gravityScale, 0.05, 0.5, 3, "x", function(v) Aim.gravityScale = v end)
+add(r, function(v) Aim.gravityScale = v end)
+ga:Button("Refresh ballistics", function()
+    if Aim.RefreshBallistics(true) then
+        Lib:Notify(
+            "Aimbot",
+            Aim.weaponName .. ": " .. math.floor(Aim.bulletSpeed) .. " speed / "
+                .. tostring(Aim.bulletGravity) .. " gravity",
+            3,
+            "success"
+        )
+    else
+        Lib:Notify("Aimbot", "Equip a gun, then refresh ballistics", 3, "warning")
+    end
+end)
+
 local it = win:Tab("Intel", "eye")
 local av = it:Section("Armor Viewer", "Left", "crosshair target")
 r = av:Toggle("Enabled", Armor.enabled, function(v) Armor.enabled = v end)
@@ -8730,6 +9068,7 @@ ss:Button("Low lag preset", function()
     Plant.enabled = false
 end)
 ss:Button("Hide all ESP", function()
+    Aim.enabled = false
     Ore.enabled = false
     P.enabled = false
     Cheat.enabled = false
