@@ -7040,6 +7040,7 @@ stop("FallenSurvivalPlayerESP")
 stop("FallenSurvivalCheaterDetector")
 stop("FallenSurvivalNpcESP")
 stop("FallenSurvivalCabinetESP")
+stop("FallenSurvivalCrateESP")
 stop("FallenSurvivalPlantESP")
 stop("FallenSurvivalArmorViewer")
 stop("FallenSurvivalDoorESP")
@@ -7456,6 +7457,82 @@ local Cab = makeWorld("CabinetESP", 160, 3000, scanCabinets)
 Cab.cacheInterval = 6
 Cab.stats = cabinetScanStats
 _G.FallenSurvivalCabinetESP = Cab
+local crateChoices = {
+    "Locked Steel Crate",
+    "Locked Metal Crate",
+    "Locked Wooden Crate",
+    "Wooden Crate",
+    "Food Crate",
+    "Timed Crate",
+    "Heli Crate",
+    "BTR Crate",
+    "Care Package",
+    "Oil Barrel",
+    "Fire Barrel",
+}
+local crateFilters = {}
+for i = 1, #crateChoices do crateFilters[crateChoices[i]] = true end
+
+local function selectedCrates()
+    local out = {}
+    for i = 1, #crateChoices do
+        local name = crateChoices[i]
+        if crateFilters[name] then out[#out + 1] = name end
+    end
+    return out
+end
+
+local function applyCrateSelection(list)
+    for i = 1, #crateChoices do crateFilters[crateChoices[i]] = false end
+    for i = 1, #(list or {}) do crateFilters[list[i]] = true end
+end
+
+local crateScanStats = { found = 0, anchored = 0 }
+local function scanCrates()
+    local out = {}
+    crateScanStats.found = 0
+    crateScanStats.anchored = 0
+
+    local bases = Workspace:FindFirstChild("Bases")
+    local loners = bases and bases:FindFirstChild("Loners")
+    if not loners then return out end
+
+    for i = 1, #crateChoices do
+        local category = crateChoices[i]
+        if crateFilters[category] then
+            local folder = loners:FindFirstChild(category)
+            if folder then
+                local okChildren, children = pcall(function() return folder:GetChildren() end)
+                if okChildren and children then
+                    for j = 1, #children do
+                        local item = children[j]
+                        local class = item and item.ClassName
+                        if class == "Model" or isPart(item) then
+                            crateScanStats.found = crateScanStats.found + 1
+                            local okPart, root = pcall(cachedFirstPart, item)
+                            if okPart and root then
+                                crateScanStats.anchored = crateScanStats.anchored + 1
+                                out[#out + 1] = { root = root, label = category }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return out
+end
+
+local Crate = makeWorld("CrateESP", 160, 3000, scanCrates)
+Crate.cacheInterval = 4
+Crate.collectInterval = 0.5
+Crate.filters = crateFilters
+Crate.choices = crateChoices
+Crate.selected = selectedCrates
+Crate.applySelection = applyCrateSelection
+Crate.stats = crateScanStats
+_G.FallenSurvivalCrateESP = Crate
 
 local plantFilters = {
     ["Tomato Plant"] = true,
@@ -8596,6 +8673,25 @@ add(r, function(v) Cab.showBox = v end)
 r = cs:Toggle("Distance", Cab.showDistance, function(v) Cab.showDistance = v end)
 add(r, function(v) Cab.showDistance = v end)
 cs:Button("Rescan cabinets", function() Cab.Rescan(); pcall(function() Lib:Notify("Cabinet ESP", "Anchored " .. tostring(Cab.stats.anchored) .. "/" .. tostring(Cab.stats.found) .. " base cabinets", 3) end) end)
+local ls = bt:Section("Loot Crates", "Right", "archive")
+r = ls:Toggle("Enabled", Crate.enabled, function(v) Crate.enabled = v end)
+add(r, function(v) Crate.enabled = v end)
+r = ls:Slider("Range", Crate.range, 100, 300, 6000, "m", function(v) Crate.range = v end)
+add(r, function(v) Crate.range = v end)
+r = ls:Toggle("Boxes", Crate.showBox, function(v) Crate.showBox = v end)
+add(r, function(v) Crate.showBox = v end)
+r = ls:Toggle("Distance", Crate.showDistance, function(v) Crate.showDistance = v end)
+add(r, function(v) Crate.showDistance = v end)
+r = ls:Dropdown("Types", Crate.selected(), Crate.choices, true, function(v)
+    Crate.applySelection(v)
+    pcall(function() Crate.Rescan() end)
+end, "multi-select loot filters", true)
+ls:Button("Rescan loot", function()
+    Crate.Rescan()
+    pcall(function()
+        Lib:Notify("Crate ESP", "Anchored " .. tostring(Crate.stats.anchored) .. "/" .. tostring(Crate.stats.found) .. " loot containers", 3)
+    end)
+end)
 
 local st = win:Tab("System", "settings")
 local ss = st:Section("Runtime", "Left", "controls")
@@ -8609,6 +8705,7 @@ ss:Button("Low lag preset", function()
     NPC.enabled = false
     Armor.enabled = false
     Cab.enabled = false
+    Crate.enabled = false
     Plant.enabled = false
 end)
 ss:Button("Hide all ESP", function()
@@ -8618,6 +8715,7 @@ ss:Button("Hide all ESP", function()
     NPC.enabled = false
     Armor.enabled = false
     Cab.enabled = false
+    Crate.enabled = false
     Plant.enabled = false
 end)
 
@@ -8646,4 +8744,4 @@ function sync.Stop()
     print("UI sync stopped")
 end
 
-print("ZeusHub pre-door baseline loaded", "ores", #Ore.nodes, "cabinets", #Cab.items, "armor", Armor.enabled, "menu H")
+print("ZeusHub loaded", "ores", #Ore.nodes, "cabinets", #Cab.items, "crates", #Crate.items, "armor", Armor.enabled, "menu H")
